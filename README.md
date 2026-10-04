@@ -9,66 +9,75 @@ Python/Tkinter GUI that builds a **full-system VPN** on Linux by chaining:
 
 All traffic (including DNS) is forced through the tunnel. The app runs as a normal user and only uses `pkexec` for the privileged route/TUN setup.
 
-## Requirements
+## One-command install (Linux Mint / Ubuntu / Debian)
 
-### System packages
 ```bash
-sudo apt install python3-tk openssh-client sshpass iproute2 policykit-1 systemd-resolved
-# or equivalent on your distro
+curl -fsSL https://raw.githubusercontent.com/erickturwa0-netizen/dnstt-ssh-vpn/main/install.sh | bash
 ```
 
-### Binaries (must be in `$PATH` or give full path in the GUI)
-- [dnstt-client](https://github.com/aalto-speech/dnstt) (or your fork)
-- [tun2socks](https://github.com/xjasonlyu/tun2socks)
+Au:
+
+```bash
+git clone https://github.com/erickturwa0-netizen/dnstt-ssh-vpn.git
+cd dnstt-ssh-vpn
+chmod +x install.sh
+./install.sh
+```
+
+Script itafanya:
+- Install system packages (`python3-tk`, `sshpass`, `iproute2`, ...)
+- Download **dnstt-client** + **tun2socks** → `/usr/local/bin/`
+- Clone/update app → `~/Apps/dnstt-ssh-vpn`
+- Tengeneza desktop launcher (itaonekana kwenye menu)
+
+## Manual requirements (ikiwa hutatumi install.sh)
+
+```bash
+sudo apt install python3-tk openssh-client sshpass iproute2 policykit-1 systemd-resolved
+```
+
+Binaries:
+- [dnstt-client](https://github.com/net2share/dnstt/releases) (linux-amd64 / linux-arm64)
+- [tun2socks](https://github.com/xjasonlyu/tun2socks/releases) (`tun2socks-linux-amd64.zip`)
 
 ## Usage
 
 ```bash
-python3 dnstt_ssh_vpn.py
+python3 ~/Apps/dnstt-ssh-vpn/dnstt_ssh_vpn.py
 ```
+
+Au fungua **DNSTT + SSH VPN** kutoka menu.
 
 ### Connection fields
 
 | Field | Description |
 |-------|-------------|
-| dnstt-client path | Path or name of `dnstt-client` |
-| tun2socks path | Path or name of `tun2socks` |
+| dnstt-client path | `dnstt-client` (baada ya install.sh) |
+| tun2socks path | `tun2socks` |
 | Mode | `udp`, `doh`, or `dot` |
 | **Dns resolve** | e.g. `8.8.8.8:53` or DoH URL |
 | **NS** | Tunnel domain |
 | **PUBLIC KEY** | Hex pubkey or path to `.pub` file |
-| **SSH HOST** | Usually `127.0.0.1` (local end of DNSTT) |
-| **SSH PORT** | Local DNSTT listen port (default `7000`) |
-| **USERNAME** | SSH username on far side |
+| **SSH HOST** | Usually `127.0.0.1` |
+| **SSH PORT** | Local DNSTT port (default `7000`) |
+| **USERNAME** | SSH username |
 | **PASSWORD** | SSH password |
 | SOCKS5 port | Default `1080` |
-| **DNS** | Upstream DNS *through* the tunnel (default `8.8.8.8`) |
+| **DNS** | Upstream DNS through tunnel |
 
-### Profiles (bottom of the window)
+### Profiles
 
-1. Fill the fields above.
-2. Type a **PROFILE NAME**.
-3. Click **SAVE PROFILE**.
-4. Later: pick from the dropdown → **Load** (or **Delete**).
+1. Jaza fields → andika **PROFILE NAME** → **SAVE PROFILE**
+2. Baadaye: chagua kutoka dropdown → **Load**
 
-Profiles are stored in `~/.config/dnstt-ssh-vpn/profiles.json` (mode 600). Last used values also go to `last.json`.
+Profiles: `~/.config/dnstt-ssh-vpn/profiles.json`
 
-Click **CONNECT VPN**. The app will:
+## Notes
 
-1. Start dnstt-client
-2. Open an SSH SOCKS proxy through the tunnel
-3. Start a local DNS proxy (UDP → TCP via SOCKS) + tun2socks
-4. Ask for admin password (`pkexec`) to create `tun0` and install routes
-
-When connected, status turns green and **all traffic** goes through the tunnel.
-
-## Notes / Limitations
-
-- Linux only (uses `ip`, `resolvectl`, `pkexec`, TUN).
-- Requires a working DNSTT server + SSH daemon reachable on the other side of the tunnel.
-- DNS is forced through a small UDP→TCP proxy because SSH only carries TCP.
-- Stopping the app (or any of the child processes dying) tears down routes and the TUN device.
+- Linux only (`ip`, `resolvectl`, `pkexec`, TUN).
+- Unahitaji DNSTT server + SSH upande wa pili.
+- Disconnect au process ikifa → routes/TUN zinaondolewa.
 
 ## License
 
-MIT (or whatever you prefer — feel free to change).
+MIT
