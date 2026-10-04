@@ -1,31 +1,40 @@
 #!/usr/bin/env bash
-# DNSTT + SSH VPN - one-shot installer for Linux (Mint/Ubuntu/Debian)
-# Installs: system deps, dnstt-client, tun2socks, desktop launcher
+# SlipNet Full-System VPN — installer for Linux Mint / Ubuntu / Debian
+# Inaweka app kwenye MENU + Desktop (si terminal)
 set -euo pipefail
 
 APP_DIR="${HOME}/Apps/dnstt-ssh-vpn"
-BIN_DIR="/usr/local/bin"
-DESKTOP="${HOME}/.local/share/applications/dnstt-ssh-vpn.desktop"
+BIN_DIR="${HOME}/.local/bin"
+SHARE_APP="${HOME}/.local/share/applications"
+DESKTOP_FILE="${SHARE_APP}/slipnet-vpn.desktop"
+DESKTOP_LINK="${HOME}/Desktop/slipnet-vpn.desktop"
+WRAPPER="${BIN_DIR}/slipnet-vpn"
 ARCH="$(uname -m)"
 
 case "$ARCH" in
   x86_64|amd64)  GOARCH=amd64 ;;
   aarch64|arm64) GOARCH=arm64 ;;
+  armv7*|armhf)  GOARCH=armv7 ;;
   *)
-    echo "Architecture isiyoungwa: $ARCH (inahitaji amd64 au arm64)"
+    echo "Architecture isiyoungwa: $ARCH"
     exit 1
     ;;
 esac
 
 echo "==> Architecture: $ARCH ($GOARCH)"
-echo "==> Installing system packages..."
+echo "==> System packages..."
 sudo apt-get update -qq
-sudo apt-get install -y python3-tk openssh-client sshpass iproute2 policykit-1 systemd-resolved curl unzip wget
+sudo apt-get install -y python3-tk python3 openssh-client sshpass iproute2 policykit-1 \
+  systemd-resolved curl unzip wget git desktop-file-utils 2>/dev/null \
+  || sudo apt-get install -y python3-tk python3 openssh-client sshpass iproute2 policykit-1 curl unzip wget git
+
+mkdir -p "$BIN_DIR" "$SHARE_APP" "${HOME}/.config/dnstt-ssh-vpn/bin"
 
 # ---- App source ----
-if [[ ! -d "$APP_DIR" ]]; then
+if [[ ! -d "$APP_DIR/.git" ]]; then
   echo "==> Cloning app..."
   mkdir -p "$(dirname "$APP_DIR")"
+  rm -rf "$APP_DIR"
   git clone https://github.com/erickturwa0-netizen/dnstt-ssh-vpn.git "$APP_DIR"
 else
   echo "==> Updating app..."
@@ -33,64 +42,91 @@ else
 fi
 chmod +x "$APP_DIR/dnstt_ssh_vpn.py"
 
-# ---- dnstt-client ----
-echo "==> Downloading dnstt-client ($GOARCH)..."
+# ---- Wrapper (anza GUI bila terminal) ----
+cat > "$WRAPPER" << EOF
+#!/usr/bin/env bash
+cd "$APP_DIR"
+exec python3 "$APP_DIR/dnstt_ssh_vpn.py" "\$@"
+EOF
+chmod +x "$WRAPPER"
+
+# Hakikisha ~/.local/bin iko PATH (session mpya)
+if ! echo ":$PATH:" | grep -q ":$BIN_DIR:"; then
+  if ! grep -q '.local/bin' "${HOME}/.profile" 2>/dev/null; then
+    echo 'export PATH="$HOME/.local/bin:$PATH"' >> "${HOME}/.profile"
+  fi
+fi
+
+# ---- Optional: slipnet CLI + tun2socks (app inaweza kupakua yenyewe pia) ----
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 
-DNSTT_URL="https://github.com/net2share/dnstt/releases/latest/download/dnstt-client-linux-${GOARCH}"
-if curl -fsSL -o "$TMP/dnstt-client" "$DNSTT_URL"; then
-  sudo install -m 755 "$TMP/dnstt-client" "$BIN_DIR/dnstt-client"
-  echo "    dnstt-client -> $BIN_DIR/dnstt-client"
-else
-  echo "WARNING: dnstt-client download failed from net2share."
-  echo "         Unaweza kujenga mwenyewe: https://www.bamsoftware.com/software/dnstt/"
-fi
-
-# ---- tun2socks ----
-echo "==> Downloading tun2socks ($GOARCH)..."
+echo "==> tun2socks..."
 T2S_ZIP="tun2socks-linux-${GOARCH}.zip"
-T2S_URL="https://github.com/xjasonlyu/tun2socks/releases/latest/download/${T2S_ZIP}"
-if curl -fsSL -o "$TMP/$T2S_ZIP" "$T2S_URL"; then
+if [[ "$GOARCH" == "armv7" ]]; then T2S_ZIP="tun2socks-linux-arm64.zip"; fi
+if curl -fsSL -o "$TMP/$T2S_ZIP" \
+  "https://github.com/xjasonlyu/tun2socks/releases/latest/download/${T2S_ZIP}"; then
   unzip -qo "$TMP/$T2S_ZIP" -d "$TMP"
-  # zip inaweza kuwa na jina la binary tofauti kidogo
   BIN=$(find "$TMP" -maxdepth 1 -type f -name 'tun2socks*' ! -name '*.zip' | head -1)
-  if [[ -n "$BIN" ]]; then
-    sudo install -m 755 "$BIN" "$BIN_DIR/tun2socks"
-    echo "    tun2socks -> $BIN_DIR/tun2socks"
-  else
-    echo "WARNING: tun2socks binary haikupatikana ndani ya zip"
+  if [[ -n "${BIN:-}" ]]; then
+    install -m 755 "$BIN" "${HOME}/.config/dnstt-ssh-vpn/bin/tun2socks"
+    echo "    tun2socks OK"
   fi
-else
-  echo "WARNING: tun2socks download failed"
 fi
 
-# ---- Desktop launcher ----
-echo "==> Creating desktop launcher..."
-mkdir -p "$(dirname "$DESKTOP")"
-cat > "$DESKTOP" << EOF
+echo "==> slipnet CLI..."
+SN_NAME="slipnet-linux-${GOARCH}"
+if curl -fsSL -o "$TMP/slipnet" \
+  "https://github.com/anonvector/SlipNet/releases/download/v2.5.3/${SN_NAME}"; then
+  install -m 755 "$TMP/slipnet" "${HOME}/.config/dnstt-ssh-vpn/bin/slipnet"
+  echo "    slipnet OK"
+else
+  echo "    (slipnet itapakuliwa otomatiki unapoconnect)"
+fi
+
+# ---- .desktop (Menu + Desktop) ----
+echo "==> Desktop application entry..."
+cat > "$DESKTOP_FILE" << EOF
 [Desktop Entry]
 Version=1.0
 Type=Application
-Name=DNSTT + SSH VPN
-Comment=Full-system DNSTT + SSH VPN for Linux
-Exec=python3 ${APP_DIR}/dnstt_ssh_vpn.py
+Name=SlipNet VPN
+GenericName=VPN Client
+Comment=SlipNet / DNSTT full-system VPN for Linux
+Exec=${WRAPPER}
 Icon=network-vpn
 Terminal=false
-Categories=Network;Security;
+Categories=Network;Security;Utility;
+Keywords=vpn;slipnet;dnstt;proxy;tunnel;
 StartupNotify=true
+StartupWMClass=dnstt_ssh_vpn.py
 EOF
-update-desktop-database "$(dirname "$DESKTOP")" 2>/dev/null || true
+chmod +x "$DESKTOP_FILE"
+
+# Copy to Desktop (Linux Mint / Cinnamon)
+mkdir -p "${HOME}/Desktop"
+cp "$DESKTOP_FILE" "$DESKTOP_LINK"
+chmod +x "$DESKTOP_LINK"
+
+# Mark as trusted (Cinnamon / Nemo) — vinginevyo icon inaweza kuuliza "Trust"
+if command -v gio >/dev/null 2>&1; then
+  gio set "$DESKTOP_LINK" metadata::trusted true 2>/dev/null || true
+fi
+# Alternate trust flag some Mint versions use
+chmod u+x "$DESKTOP_LINK"
+
+update-desktop-database "$SHARE_APP" 2>/dev/null || true
 
 echo ""
-echo "========================================"
-echo "  Installation complete!"
-echo "========================================"
-echo "  App:      $APP_DIR"
-echo "  dnstt:    $(command -v dnstt-client 2>/dev/null || echo 'NOT FOUND')"
-echo "  tun2socks:$(command -v tun2socks 2>/dev/null || echo 'NOT FOUND')"
-echo "  Menu:     DNSTT + SSH VPN"
+echo "============================================"
+echo "  Installation complete — Desktop App ready"
+echo "============================================"
+echo "  Menu name : SlipNet VPN"
+echo "  Desktop   : ${DESKTOP_LINK}"
+echo "  Command   : slipnet-vpn"
 echo ""
-echo "  Anzisha:  python3 $APP_DIR/dnstt_ssh_vpn.py"
-echo "  au tafuta 'DNSTT' kwenye menu."
-echo "========================================"
+echo "  Fungua kutoka:"
+echo "    • Menu ya Linux Mint → tafuta 'SlipNet'"
+echo "    • Icon kwenye Desktop"
+echo "    • Au: slipnet-vpn"
+echo "============================================"
