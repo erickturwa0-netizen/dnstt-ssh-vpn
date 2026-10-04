@@ -27,20 +27,31 @@ sudo apt install python3-tk openssh-client sshpass iproute2 policykit-1 systemd-
 python3 dnstt_ssh_vpn.py
 ```
 
-Fill in the fields:
+### Connection fields
 
 | Field | Description |
 |-------|-------------|
 | dnstt-client path | Path or name of `dnstt-client` |
 | tun2socks path | Path or name of `tun2socks` |
 | Mode | `udp`, `doh`, or `dot` |
-| Resolver | e.g. `8.8.8.8:53` or DoH URL |
-| Tunnel domain (NS) | Your DNSTT domain |
-| Pubkey | Hex pubkey or path to `.pub` file |
-| SSH username / password | Credentials on the far side of the tunnel |
-| Local DNSTT port | Default `7000` |
+| **Dns resolve** | e.g. `8.8.8.8:53` or DoH URL |
+| **NS** | Tunnel domain |
+| **PUBLIC KEY** | Hex pubkey or path to `.pub` file |
+| **SSH HOST** | Usually `127.0.0.1` (local end of DNSTT) |
+| **SSH PORT** | Local DNSTT listen port (default `7000`) |
+| **USERNAME** | SSH username on far side |
+| **PASSWORD** | SSH password |
 | SOCKS5 port | Default `1080` |
-| DNS upstream | DNS server reached *through* the tunnel (default `8.8.8.8`) |
+| **DNS** | Upstream DNS *through* the tunnel (default `8.8.8.8`) |
+
+### Profiles (bottom of the window)
+
+1. Fill the fields above.
+2. Type a **PROFILE NAME**.
+3. Click **SAVE PROFILE**.
+4. Later: pick from the dropdown → **Load** (or **Delete**).
+
+Profiles are stored in `~/.config/dnstt-ssh-vpn/profiles.json` (mode 600). Last used values also go to `last.json`.
 
 Click **CONNECT VPN**. The app will:
 
@@ -50,8 +61,6 @@ Click **CONNECT VPN**. The app will:
 4. Ask for admin password (`pkexec`) to create `tun0` and install routes
 
 When connected, status turns green and **all traffic** goes through the tunnel.
-
-Config is saved to `~/.config/dnstt-ssh-vpn.json` (mode 600).
 
 ## Notes / Limitations
 
