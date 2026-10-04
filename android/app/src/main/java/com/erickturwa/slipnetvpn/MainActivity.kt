@@ -35,7 +35,6 @@ class MainActivity : AppCompatActivity() {
         b.btnConnect.setOnClickListener { toggleConnect() }
         b.btnSave.setOnClickListener { saveProfile() }
 
-        // deep link slipnet://
         intent?.data?.let { uri ->
             if (uri.scheme == "slipnet") {
                 b.modeSlipnet.isChecked = true
@@ -44,7 +43,7 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        log("App ready. Linux Mint app bado ipo kwenye repo.")
+        log("Ready.")
     }
 
     private fun log(msg: String) {
@@ -57,7 +56,8 @@ class MainActivity : AppCompatActivity() {
             val meta = parseSlipnet(raw)
             slipnetUri = meta.getString("uri")
             slipMeta = meta
-            b.slipInfo.text = "Name: ${meta.optString("name")}\nType: ${meta.optString("tunnel_type")}\nDomain: ${meta.optString("domain")}"
+            b.slipInfo.text =
+                "Name: ${meta.optString("name")}\nType: ${meta.optString("tunnel_type")}\nDomain: ${meta.optString("domain")}"
             b.profileName.setText(meta.optString("name"))
             log("Imported: ${meta.optString("tunnel_type")} / ${meta.optString("domain")}")
             Toast.makeText(this, "Config imported", Toast.LENGTH_SHORT).show()
@@ -93,12 +93,15 @@ class MainActivity : AppCompatActivity() {
 
     private fun toggleConnect() {
         if (connected) {
-            stopService(Intent(this, SlipVpnService::class.java))
+            val i = Intent(this, SlipVpnService::class.java).apply {
+                action = SlipVpnService.ACTION_DISCONNECT
+            }
+            startService(i)
             connected = false
             b.btnConnect.setText(R.string.connect)
             b.statusText.text = "Disconnected"
             b.statusText.setTextColor(getColor(R.color.red_light))
-            log("Disconnected")
+            log("Disconnected — notification sent")
             return
         }
 
@@ -138,9 +141,18 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun startVpn() {
+        val slipMode = b.modeSlipnet.isChecked
+        val label = when {
+            slipMode -> slipMeta?.optString("name")?.ifBlank { null }
+                ?: slipMeta?.optString("domain")
+                ?: "SlipNet"
+            else -> b.fDomain.text?.toString()?.ifBlank { null } ?: "DNSTT"
+        }
+
         val i = Intent(this, SlipVpnService::class.java).apply {
             action = SlipVpnService.ACTION_CONNECT
-            putExtra(SlipVpnService.EXTRA_MODE, if (b.modeSlipnet.isChecked) "slipnet" else "dnstt")
+            putExtra(SlipVpnService.EXTRA_MODE, if (slipMode) "slipnet" else "dnstt")
+            putExtra(SlipVpnService.EXTRA_LABEL, label)
             putExtra(SlipVpnService.EXTRA_SLIPNET_URI, slipnetUri)
             putExtra(SlipVpnService.EXTRA_DOMAIN, b.fDomain.text?.toString())
             putExtra(SlipVpnService.EXTRA_PUBKEY, b.fPubkey.text?.toString())
@@ -152,10 +164,9 @@ class MainActivity : AppCompatActivity() {
         startForegroundService(i)
         connected = true
         b.btnConnect.setText(R.string.disconnect)
-        b.statusText.text = "VPN ON"
+        b.statusText.text = "Connected"
         b.statusText.setTextColor(getColor(R.color.green_ok))
-        log("VPN service started (TUN interface)")
-        log("Note: Full DNS-tunnel engine on Android needs native binaries; TUN is up for system routing framework.")
+        log("Connected — notification: VPN ON")
     }
 
     private fun saveProfile() {

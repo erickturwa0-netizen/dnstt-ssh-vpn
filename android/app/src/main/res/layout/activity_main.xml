@@ -44,7 +44,6 @@
                 android:textColor="@color/text_primary" />
         </RadioGroup>
 
-        <!-- SlipNet panel -->
         <LinearLayout
             android:id="@+id/panelSlipnet"
             android:layout_width="match_parent"
@@ -86,7 +85,6 @@
                 android:paddingTop="8dp" />
         </LinearLayout>
 
-        <!-- DNSTT panel -->
         <LinearLayout
             android:id="@+id/panelDnstt"
             android:layout_width="match_parent"
@@ -100,7 +98,6 @@
             <EditText android:id="@+id/fResolver" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="Dns resolve" android:text="8.8.8.8:53" android:textColor="@color/text_primary" android:textColorHint="@color/text_secondary" />
             <EditText android:id="@+id/fDomain" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="NS (Tunnel domain)" android:textColor="@color/text_primary" android:textColorHint="@color/text_secondary" />
             <EditText android:id="@+id/fPubkey" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="PUBLIC KEY" android:textColor="@color/text_primary" android:textColorHint="@color/text_secondary" />
-            <EditText android:id="@+id/fSshHost" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="SSH HOST" android:text="127.0.0.1" android:textColor="@color/text_primary" android:textColorHint="@color/text_secondary" />
             <EditText android:id="@+id/fSshPort" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="SSH PORT" android:text="7000" android:inputType="number" android:textColor="@color/text_primary" android:textColorHint="@color/text_secondary" />
             <EditText android:id="@+id/fUser" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="USERNAME" android:textColor="@color/text_primary" android:textColorHint="@color/text_secondary" />
             <EditText android:id="@+id/fPass" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="PASSWORD" android:inputType="textPassword" android:textColor="@color/text_primary" android:textColorHint="@color/text_secondary" />
