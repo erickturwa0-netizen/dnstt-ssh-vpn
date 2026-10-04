@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">SlipNet VPN</string>
+    <string name="connect">CONNECT VPN</string>
+    <string name="disconnect">DISCONNECT</string>
+    <string name="import_config">IMPORT CONFIG</string>
+    <string name="save_profile">SAVE PROFILE</string>
+    <string name="mode_dnstt">DNSTT + SSH</string>
+    <string name="mode_slipnet">SlipNet</string>
+</resources>

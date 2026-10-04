@@ -1,0 +1,171 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/bg_dark"
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="16dp">
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="SlipNet VPN"
+            android:textColor="@color/red_light"
+            android:textSize="22sp"
+            android:textStyle="bold"
+            android:paddingBottom="8dp" />
+
+        <RadioGroup
+            android:id="@+id/modeGroup"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal">
+
+            <RadioButton
+                android:id="@+id/modeDnstt"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:checked="true"
+                android:text="@string/mode_dnstt"
+                android:textColor="@color/text_primary" />
+
+            <RadioButton
+                android:id="@+id/modeSlipnet"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="16dp"
+                android:text="@string/mode_slipnet"
+                android:textColor="@color/text_primary" />
+        </RadioGroup>
+
+        <!-- SlipNet panel -->
+        <LinearLayout
+            android:id="@+id/panelSlipnet"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:visibility="gone"
+            android:background="@color/bg_card"
+            android:padding="12dp"
+            android:layout_marginTop="8dp">
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Import slipnet://"
+                android:textColor="@color/text_secondary" />
+
+            <EditText
+                android:id="@+id/inputSlipnet"
+                android:layout_width="match_parent"
+                android:layout_height="100dp"
+                android:gravity="top"
+                android:inputType="textMultiLine"
+                android:textColor="@color/text_primary"
+                android:hint="slipnet://..."
+                android:textColorHint="@color/text_secondary" />
+
+            <Button
+                android:id="@+id/btnImport"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/import_config"
+                app:backgroundTint="@color/red_primary" />
+
+            <TextView
+                android:id="@+id/slipInfo"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:textColor="@color/text_secondary"
+                android:paddingTop="8dp" />
+        </LinearLayout>
+
+        <!-- DNSTT panel -->
+        <LinearLayout
+            android:id="@+id/panelDnstt"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:background="@color/bg_card"
+            android:padding="12dp"
+            android:layout_marginTop="8dp">
+
+            <EditText android:id="@+id/fMode" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="Mode (udp/doh/dot)" android:text="udp" android:textColor="@color/text_primary" android:textColorHint="@color/text_secondary" />
+            <EditText android:id="@+id/fResolver" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="Dns resolve" android:text="8.8.8.8:53" android:textColor="@color/text_primary" android:textColorHint="@color/text_secondary" />
+            <EditText android:id="@+id/fDomain" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="NS (Tunnel domain)" android:textColor="@color/text_primary" android:textColorHint="@color/text_secondary" />
+            <EditText android:id="@+id/fPubkey" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="PUBLIC KEY" android:textColor="@color/text_primary" android:textColorHint="@color/text_secondary" />
+            <EditText android:id="@+id/fSshHost" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="SSH HOST" android:text="127.0.0.1" android:textColor="@color/text_primary" android:textColorHint="@color/text_secondary" />
+            <EditText android:id="@+id/fSshPort" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="SSH PORT" android:text="7000" android:inputType="number" android:textColor="@color/text_primary" android:textColorHint="@color/text_secondary" />
+            <EditText android:id="@+id/fUser" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="USERNAME" android:textColor="@color/text_primary" android:textColorHint="@color/text_secondary" />
+            <EditText android:id="@+id/fPass" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="PASSWORD" android:inputType="textPassword" android:textColor="@color/text_primary" android:textColorHint="@color/text_secondary" />
+            <EditText android:id="@+id/fDnsUp" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="DNS upstream" android:text="8.8.8.8" android:textColor="@color/text_primary" android:textColorHint="@color/text_secondary" />
+        </LinearLayout>
+
+        <Button
+            android:id="@+id/btnConnect"
+            android:layout_width="match_parent"
+            android:layout_height="56dp"
+            android:layout_marginTop="12dp"
+            android:text="@string/connect"
+            android:textStyle="bold"
+            app:backgroundTint="@color/red_primary" />
+
+        <TextView
+            android:id="@+id/statusText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Disconnected"
+            android:textColor="@color/red_light"
+            android:paddingTop="8dp" />
+
+        <TextView
+            android:id="@+id/trafficDown"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="↓ Download: —"
+            android:textColor="@color/green_ok"
+            android:paddingTop="8dp" />
+
+        <TextView
+            android:id="@+id/trafficUp"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="↑ Upload: —"
+            android:textColor="#42A5F5" />
+
+        <TextView
+            android:id="@+id/logView"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:minHeight="120dp"
+            android:background="#000000"
+            android:textColor="#CCCCCC"
+            android:padding="8dp"
+            android:layout_marginTop="8dp"
+            android:fontFamily="monospace"
+            android:textSize="12sp"
+            android:text="Ready.\n" />
+
+        <EditText
+            android:id="@+id/profileName"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="PROFILE NAME"
+            android:textColor="@color/text_primary"
+            android:textColorHint="@color/text_secondary"
+            android:layout_marginTop="8dp" />
+
+        <Button
+            android:id="@+id/btnSave"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/save_profile"
+            app:backgroundTint="@color/red_dark" />
+    </LinearLayout>
+</ScrollView>
