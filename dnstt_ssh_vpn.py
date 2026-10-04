@@ -1,34 +1,31 @@
 #!/usr/bin/env python3
 """DNSTT + SSH full-system VPN GUI (Linux).
-Inahitaji: python3-tk openssh-client sshpass iproute2 policykit-1 (pkexec) systemd-resolved
-Pamoja na binaries: dnstt-client na tun2socks (xjasonlyu/tun2socks).
-Endesha kama user wa kawaida; app itaomba password ya admin (pkexec) kwa routes tu.
-
-Profiles zimehifadhiwa kwenye ~/.config/dnstt-ssh-vpn/profiles.json
+Wewe jaza tu details za DNSTT + SSH → SAVE → CONNECT.
+App inatafuta (au kupakua) dnstt-client na tun2socks otomatiki.
 """
-import json, os, re, shutil, socket, struct, subprocess, threading, time, tkinter as tk
+import json, os, platform, re, shutil, socket, struct, subprocess, threading, time, tkinter as tk
 from tkinter import ttk, messagebox
 from urllib.parse import urlparse
+from urllib.request import urlretrieve
 
 CFG_DIR = os.path.expanduser("~/.config/dnstt-ssh-vpn")
+BIN_DIR = os.path.join(CFG_DIR, "bin")
 CFG = os.path.join(CFG_DIR, "last.json")
 PROFILES = os.path.join(CFG_DIR, "profiles.json")
 
-# (key, label, default)
+# Fields user anajaza tu (hapana path za binaries)
 FIELDS = [
-    ("dnstt_path", "dnstt-client path", "dnstt-client"),
-    ("tun2socks_path", "tun2socks path", "tun2socks"),
     ("mode", "Mode (udp/doh/dot)", "udp"),
     ("resolver", "Dns resolve (8.8.8.8:53 / DoH URL)", "8.8.8.8:53"),
-    ("domain", "NS (Tunnel domain)", "t.example.com"),
+    ("domain", "NS (Tunnel domain)", ""),
     ("pubkey", "PUBLIC KEY (hex au path .pub)", ""),
     ("ssh_host", "SSH HOST", "127.0.0.1"),
-    ("ssh_port", "SSH PORT (local DNSTT port)", "7000"),
+    ("ssh_port", "SSH PORT", "7000"),
     ("ssh_user", "USERNAME", ""),
     ("ssh_pass", "PASSWORD", ""),
-    ("socks_port", "SOCKS5 port", "1080"),
     ("dns_up", "DNS (upstream kupitia tunnel)", "8.8.8.8"),
 ]
+SOCKS_PORT = "1080"
 TUN = "tun0"
 IP_RE = re.compile(r"^\d{1,3}(\.\d{1,3}){3}$")
 
@@ -53,31 +50,111 @@ ip link del %(tun)s 2>/dev/null
 true
 """
 
+
 def pk(script):
     return subprocess.run(["pkexec", "sh", "-c", script], capture_output=True, text=True)
 
+
 def socks_connect(port, host, hport):
     s = socket.create_connection(("127.0.0.1", port), timeout=10)
-    s.sendall(b"\x05\x01\x00"); s.recv(2)
+    s.sendall(b"\x05\x01\x00")
+    s.recv(2)
     s.sendall(b"\x05\x01\x00\x01" + socket.inet_aton(host) + struct.pack(">H", hport))
     r = s.recv(10)
-    if len(r) < 2 or r[1] != 0: raise OSError("socks fail")
+    if len(r) < 2 or r[1] != 0:
+        raise OSError("socks fail")
     return s
 
+
+def goarch():
+    m = platform.machine().lower()
+    if m in ("x86_64", "amd64"):
+        return "amd64"
+    if m in ("aarch64", "arm64"):
+        return "arm64"
+    return m
+
+
+def find_binary(name):
+    """Tafuta binary: PATH, /usr/local/bin, folder ya app."""
+    p = shutil.which(name)
+    if p:
+        return p
+    for d in ("/usr/local/bin", "/usr/bin", BIN_DIR, os.path.expanduser("~/Apps/dnstt-ssh-vpn")):
+        cand = os.path.join(d, name)
+        if os.path.isfile(cand) and os.access(cand, os.X_OK):
+            return cand
+    return None
+
+
+def download_binaries(log_fn):
+    """Pakua dnstt-client + tun2socks ikiwa hazipo."""
+    os.makedirs(BIN_DIR, exist_ok=True)
+    arch = goarch()
+    results = {}
+
+    # dnstt-client
+    dnstt = find_binary("dnstt-client")
+    if not dnstt:
+        log_fn("Inapakua dnstt-client...")
+        url = f"https://github.com/net2share/dnstt/releases/latest/download/dnstt-client-linux-{arch}"
+        dest = os.path.join(BIN_DIR, "dnstt-client")
+        try:
+            urlretrieve(url, dest)
+            os.chmod(dest, 0o755)
+            dnstt = dest
+            log_fn(f"dnstt-client imewekwa: {dest}")
+        except Exception as e:
+            log_fn(f"Imeshindwa kupakua dnstt-client: {e}")
+    results["dnstt"] = dnstt
+
+    # tun2socks
+    t2s = find_binary("tun2socks")
+    if not t2s:
+        log_fn("Inapakua tun2socks...")
+        zip_name = f"tun2socks-linux-{arch}.zip"
+        url = f"https://github.com/xjasonlyu/tun2socks/releases/latest/download/{zip_name}"
+        zip_path = os.path.join(BIN_DIR, zip_name)
+        try:
+            urlretrieve(url, zip_path)
+            import zipfile
+            with zipfile.ZipFile(zip_path, "r") as z:
+                z.extractall(BIN_DIR)
+            os.remove(zip_path)
+            # find extracted binary
+            for fn in os.listdir(BIN_DIR):
+                if fn.startswith("tun2socks") and not fn.endswith(".zip"):
+                    src = os.path.join(BIN_DIR, fn)
+                    dest = os.path.join(BIN_DIR, "tun2socks")
+                    if src != dest:
+                        shutil.move(src, dest)
+                    os.chmod(dest, 0o755)
+                    t2s = dest
+                    break
+            log_fn(f"tun2socks imewekwa: {t2s}")
+        except Exception as e:
+            log_fn(f"Imeshindwa kupakua tun2socks: {e}")
+    results["tun2socks"] = t2s
+    return results
+
+
 class DNSProxy(threading.Thread):
-    """UDP DNS (127.0.0.1:5353) -> TCP DNS kupitia SOCKS (SSH ina-support TCP tu)."""
     def __init__(self, socks_port, upstream):
         super().__init__(daemon=True)
         self.sp, self.up, self.stop_ev = socks_port, upstream, threading.Event()
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.sock.bind(("127.0.0.1", 5353)); self.sock.settimeout(1)
+        self.sock.bind(("127.0.0.1", 5353))
+        self.sock.settimeout(1)
 
     def run(self):
         while not self.stop_ev.is_set():
-            try: data, addr = self.sock.recvfrom(4096)
-            except socket.timeout: continue
-            except OSError: break
+            try:
+                data, addr = self.sock.recvfrom(4096)
+            except socket.timeout:
+                continue
+            except OSError:
+                break
             threading.Thread(target=self.handle, args=(data, addr), daemon=True).start()
 
     def handle(self, data, addr):
@@ -88,16 +165,20 @@ class DNSProxy(threading.Thread):
             buf = b""
             while len(buf) < ln:
                 c = s.recv(ln - len(buf))
-                if not c: break
+                if not c:
+                    break
                 buf += c
-            s.close(); self.sock.sendto(buf, addr)
+            s.close()
+            self.sock.sendto(buf, addr)
         except Exception:
             pass
 
     def close(self):
         self.stop_ev.set()
-        try: self.sock.close()
-        except Exception: pass
+        try:
+            self.sock.close()
+        except Exception:
+            pass
 
 
 def load_json(path, default):
@@ -109,7 +190,7 @@ def load_json(path, default):
 
 
 def save_json(path, data):
-    os.makedirs(os.path.dirname(path), exist_ok=True)
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     with open(path, "w") as f:
         json.dump(data, f, indent=2)
     os.chmod(path, 0o600)
@@ -119,60 +200,67 @@ class App(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("DNSTT + SSH VPN")
-        self.geometry("620x780")
+        self.geometry("600x700")
         self.procs, self.dns, self.res_ip, self.up = [], None, None, False
 
         cfg = load_json(CFG, {})
         self.profiles = load_json(PROFILES, {})
-
         self.vars = {}
+
         outer = ttk.Frame(self, padding=10)
         outer.pack(fill="both", expand=True)
 
-        # ---- Connection fields ----
-        f = ttk.LabelFrame(outer, text="Connection settings", padding=8)
+        f = ttk.LabelFrame(outer, text="DNSTT + SSH settings", padding=8)
         f.pack(fill="x", pady=(0, 8))
         for i, (k, label, d) in enumerate(FIELDS):
             ttk.Label(f, text=label).grid(row=i, column=0, sticky="w", pady=2, padx=(0, 8))
             v = tk.StringVar(value=cfg.get(k, d))
             self.vars[k] = v
             show = "*" if k == "ssh_pass" else ""
-            ttk.Entry(f, textvariable=v, width=42, show=show).grid(row=i, column=1, sticky="ew", pady=2)
+            ttk.Entry(f, textvariable=v, width=40, show=show).grid(row=i, column=1, sticky="ew", pady=2)
         f.columnconfigure(1, weight=1)
 
-        # ---- Connect / status / log ----
         self.btn = ttk.Button(outer, text="CONNECT VPN", command=self.toggle)
         self.btn.pack(fill="x", pady=4)
         self.status = ttk.Label(outer, text="Disconnected", foreground="red")
         self.status.pack()
-        self.log = tk.Text(outer, height=10, state="disabled", wrap="word")
+        self.log = tk.Text(outer, height=11, state="disabled", wrap="word")
         self.log.pack(fill="both", expand=True, pady=6)
 
-        # ---- Profile section (bottom) ----
-        pf = ttk.LabelFrame(outer, text="Profiles (hifadhi / load)", padding=8)
+        pf = ttk.LabelFrame(outer, text="Profiles", padding=8)
         pf.pack(fill="x", pady=(4, 0))
 
         row0 = ttk.Frame(pf)
         row0.pack(fill="x", pady=2)
         ttk.Label(row0, text="PROFILE NAME").pack(side="left")
         self.profile_name = tk.StringVar()
-        ttk.Entry(row0, textvariable=self.profile_name, width=28).pack(side="left", padx=6, fill="x", expand=True)
+        ttk.Entry(row0, textvariable=self.profile_name, width=28).pack(
+            side="left", padx=6, fill="x", expand=True
+        )
 
         row1 = ttk.Frame(pf)
         row1.pack(fill="x", pady=4)
-        ttk.Label(row1, text="Saved profiles").pack(side="left")
-        self.profile_combo = ttk.Combobox(row1, state="readonly", width=26)
+        ttk.Label(row1, text="Saved").pack(side="left")
+        self.profile_combo = ttk.Combobox(row1, state="readonly", width=24)
         self.profile_combo.pack(side="left", padx=6)
-        self.profile_combo.bind("<<ComboboxSelected>>", self.on_profile_select)
         ttk.Button(row1, text="Load", command=self.load_selected_profile).pack(side="left", padx=2)
         ttk.Button(row1, text="Delete", command=self.delete_profile).pack(side="left", padx=2)
 
-        row2 = ttk.Frame(pf)
-        row2.pack(fill="x", pady=4)
-        ttk.Button(row2, text="SAVE PROFILE", command=self.save_profile).pack(fill="x")
+        ttk.Button(pf, text="SAVE PROFILE", command=self.save_profile).pack(fill="x", pady=4)
 
         self.refresh_profile_list()
         self.protocol("WM_DELETE_WINDOW", self.on_close)
+
+        # check binaries on startup
+        threading.Thread(target=self._check_bins, daemon=True).start()
+
+    def _check_bins(self):
+        d = find_binary("dnstt-client")
+        t = find_binary("tun2socks")
+        msg = []
+        msg.append(f"dnstt-client: {d or 'haitapatikani (itapakuliwa unapoconnect)'}")
+        msg.append(f"tun2socks: {t or 'haitapatikani (itapakuliwa unapoconnect)'}")
+        self.ui(self.w, " | ".join(msg))
 
     def refresh_profile_list(self):
         names = sorted(self.profiles.keys())
@@ -198,9 +286,6 @@ class App(tk.Tk):
         self.refresh_profile_list()
         self.profile_combo.set(name)
         messagebox.showinfo("Saved", f"Profile '{name}' imehifadhiwa.")
-
-    def on_profile_select(self, _event=None):
-        pass  # user presses Load
 
     def load_selected_profile(self):
         name = self.profile_combo.get()
@@ -241,9 +326,6 @@ class App(tk.Tk):
 
     def start(self):
         g = self.current_values()
-        for b in (g["dnstt_path"], g["tun2socks_path"]):
-            if not shutil.which(b) and not os.path.isfile(b):
-                return self.ui(messagebox.showerror, "Error", f"{b} haipatikani")
         if not g["ssh_user"]:
             return self.ui(messagebox.showerror, "Error", "USERNAME inahitajika")
         if not g["domain"] or not g["pubkey"]:
@@ -251,7 +333,24 @@ class App(tk.Tk):
 
         save_json(CFG, g)
 
-        host = urlparse(g["resolver"]).hostname if "://" in g["resolver"] else g["resolver"].rsplit(":", 1)[0]
+        # Auto-find or download binaries
+        self.ui(self.w, "Inatafuta dnstt-client & tun2socks...")
+        bins = download_binaries(lambda m: self.ui(self.w, m))
+        dnstt = bins.get("dnstt") or find_binary("dnstt-client")
+        t2s = bins.get("tun2socks") or find_binary("tun2socks")
+        if not dnstt or not t2s:
+            return self.ui(
+                messagebox.showerror,
+                "Error",
+                "dnstt-client au tun2socks haipatikani.\n"
+                "Endesha: curl -fsSL https://raw.githubusercontent.com/erickturwa0-netizen/dnstt-ssh-vpn/main/install.sh | bash",
+            )
+
+        host = (
+            urlparse(g["resolver"]).hostname
+            if "://" in g["resolver"]
+            else g["resolver"].rsplit(":", 1)[0]
+        )
         try:
             self.res_ip = socket.gethostbyname(host)
         except Exception:
@@ -260,13 +359,17 @@ class App(tk.Tk):
             return self.ui(messagebox.showerror, "Error", "Dns resolve si IP sahihi")
 
         flag = {"udp": "-udp", "doh": "-doh", "dot": "-dot"}.get(g["mode"].lower(), "-udp")
-        key = ["-pubkey-file", g["pubkey"]] if os.path.isfile(g["pubkey"]) else ["-pubkey", g["pubkey"]]
+        key = (
+            ["-pubkey-file", g["pubkey"]]
+            if os.path.isfile(g["pubkey"])
+            else ["-pubkey", g["pubkey"]]
+        )
         local_port = g["ssh_port"] or "7000"
         ssh_target = g["ssh_host"] or "127.0.0.1"
 
-        dn = [g["dnstt_path"], flag, g["resolver"], *key, g["domain"], f"127.0.0.1:{local_port}"]
+        dn = [dnstt, flag, g["resolver"], *key, g["domain"], f"127.0.0.1:{local_port}"]
         ssh = [
-            "ssh", "-N", "-D", f"127.0.0.1:{g['socks_port']}",
+            "ssh", "-N", "-D", f"127.0.0.1:{SOCKS_PORT}",
             "-p", local_port,
             "-o", "StrictHostKeyChecking=no",
             "-o", "UserKnownHostsFile=/dev/null",
@@ -286,7 +389,7 @@ class App(tk.Tk):
         time.sleep(2)
         self.ui(self.w, "2/4 SSH...")
         self.spawn(ssh, "ssh", env)
-        sp = int(g["socks_port"] or 1080)
+        sp = int(SOCKS_PORT)
         for _ in range(40):
             try:
                 socket.create_connection(("127.0.0.1", sp), timeout=1).close()
@@ -300,10 +403,7 @@ class App(tk.Tk):
         self.ui(self.w, "3/4 DNS proxy + tun2socks...")
         self.dns = DNSProxy(sp, g["dns_up"] or "8.8.8.8")
         self.dns.start()
-        self.spawn(
-            [g["tun2socks_path"], "-device", f"tun://{TUN}", "-proxy", f"socks5://127.0.0.1:{sp}"],
-            "tun2socks",
-        )
+        self.spawn([t2s, "-device", f"tun://{TUN}", "-proxy", f"socks5://127.0.0.1:{sp}"], "tun2socks")
         self.ui(self.w, "4/4 Routes (pkexec)...")
         r = pk(UP % {"tun": TUN, "res": self.res_ip})
         if r.returncode != 0:
