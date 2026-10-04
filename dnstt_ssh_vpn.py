@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""SlipNet + DNSTT/SSH full-system VPN GUI (Linux).
+"""Full-system VPN GUI (Linux): DNSTT+SSH na SlipNet (slipnet://).
 
-Import slipnet:// configs (anonvector/SlipNet) → CONNECT → full system VPN.
-Uses official slipnet CLI (SOCKS5) + tun2socks for system-wide routing.
+- Mode DNSTT+SSH: jaza fields → CONNECT
+- Mode SlipNet: import slipnet:// → CONNECT
+- Upload / Download live stats kuthibitisha data inapita
 """
 import base64
 import json
@@ -25,13 +26,24 @@ BIN_DIR = os.path.join(CFG_DIR, "bin")
 CFG = os.path.join(CFG_DIR, "last.json")
 PROFILES = os.path.join(CFG_DIR, "profiles.json")
 
-SOCKS_PORT = 1080
+SOCKS_PORT_DEFAULT = "1080"
 TUN = "tun0"
 IP_RE = re.compile(r"^\d{1,3}(\.\d{1,3}){3}$")
-
-# Official SlipNet CLI (has linux binaries on v2.5.3)
 SLIPNET_CLI_TAG = "v2.5.3"
 SLIPNET_CLI_BASE = f"https://github.com/anonvector/SlipNet/releases/download/{SLIPNET_CLI_TAG}"
+
+DNSTT_FIELDS = [
+    ("mode", "Mode (udp/doh/dot)", "udp"),
+    ("resolver", "Dns resolve", "8.8.8.8:53"),
+    ("domain", "NS (Tunnel domain)", ""),
+    ("pubkey", "PUBLIC KEY", ""),
+    ("ssh_host", "SSH HOST", "127.0.0.1"),
+    ("ssh_port", "SSH PORT", "7000"),
+    ("ssh_user", "USERNAME", ""),
+    ("ssh_pass", "PASSWORD", ""),
+    ("dns_up", "DNS upstream", "8.8.8.8"),
+    ("socks_port", "SOCKS port", SOCKS_PORT_DEFAULT),
+]
 
 UP = """set -e
 GW=$(ip route show default | awk '/default/ {print $3; exit}')
@@ -76,7 +88,7 @@ def goarch():
         return "amd64"
     if m in ("aarch64", "arm64"):
         return "arm64"
-    if m in ("armv7l", "armv7"):
+    if m.startswith("arm"):
         return "armv7"
     return m
 
@@ -92,79 +104,65 @@ def find_binary(name):
     return None
 
 
-def ensure_tun2socks(log_fn):
-    t2s = find_binary("tun2socks")
-    if t2s:
-        return t2s
+def ensure_binary(name, log_fn):
+    """Find or download known binaries once."""
+    found = find_binary(name)
+    if found:
+        return found
     os.makedirs(BIN_DIR, exist_ok=True)
     arch = goarch()
-    if arch == "armv7":
-        arch = "386"  # fallback naming; may fail on pure armv7
-    log_fn("Inapakua tun2socks...")
-    zip_name = f"tun2socks-linux-{arch if arch != 'armv7' else 'arm64'}.zip"
-    if goarch() == "amd64":
-        zip_name = "tun2socks-linux-amd64.zip"
-    elif goarch() == "arm64":
-        zip_name = "tun2socks-linux-arm64.zip"
-    else:
-        zip_name = "tun2socks-linux-amd64.zip"
-    url = f"https://github.com/xjasonlyu/tun2socks/releases/latest/download/{zip_name}"
-    zip_path = os.path.join(BIN_DIR, zip_name)
-    try:
-        urlretrieve(url, zip_path)
-        import zipfile
 
-        with zipfile.ZipFile(zip_path, "r") as z:
-            z.extractall(BIN_DIR)
-        os.remove(zip_path)
-        for fn in os.listdir(BIN_DIR):
-            if fn.startswith("tun2socks") and not fn.endswith(".zip"):
-                src = os.path.join(BIN_DIR, fn)
-                dest = os.path.join(BIN_DIR, "tun2socks")
-                if src != dest:
-                    shutil.move(src, dest)
-                os.chmod(dest, 0o755)
-                return dest
+    try:
+        if name == "tun2socks":
+            log_fn("Inapakua tun2socks...")
+            zname = f"tun2socks-linux-{'amd64' if arch == 'amd64' else 'arm64'}.zip"
+            url = f"https://github.com/xjasonlyu/tun2socks/releases/latest/download/{zname}"
+            zpath = os.path.join(BIN_DIR, zname)
+            urlretrieve(url, zpath)
+            import zipfile
+
+            with zipfile.ZipFile(zpath, "r") as z:
+                z.extractall(BIN_DIR)
+            os.remove(zpath)
+            for fn in os.listdir(BIN_DIR):
+                if fn.startswith("tun2socks") and not fn.endswith(".zip"):
+                    src = os.path.join(BIN_DIR, fn)
+                    dest = os.path.join(BIN_DIR, "tun2socks")
+                    if src != dest:
+                        shutil.move(src, dest)
+                    os.chmod(dest, 0o755)
+                    return dest
+
+        if name == "dnstt-client":
+            log_fn("Inapakua dnstt-client...")
+            url = f"https://github.com/net2share/dnstt/releases/latest/download/dnstt-client-linux-{arch if arch != 'armv7' else 'arm64'}"
+            dest = os.path.join(BIN_DIR, "dnstt-client")
+            urlretrieve(url, dest)
+            os.chmod(dest, 0o755)
+            return dest
+
+        if name == "slipnet":
+            log_fn("Inapakua slipnet CLI...")
+            url = f"{SLIPNET_CLI_BASE}/slipnet-linux-{arch}"
+            dest = os.path.join(BIN_DIR, "slipnet")
+            urlretrieve(url, dest)
+            os.chmod(dest, 0o755)
+            return dest
     except Exception as e:
-        log_fn(f"tun2socks fail: {e}")
+        log_fn(f"Download {name} fail: {e}")
     return None
 
 
-def ensure_slipnet(log_fn):
-    sn = find_binary("slipnet")
-    if sn:
-        return sn
-    os.makedirs(BIN_DIR, exist_ok=True)
-    arch = goarch()
-    name = f"slipnet-linux-{arch}"
-    url = f"{SLIPNET_CLI_BASE}/{name}"
-    dest = os.path.join(BIN_DIR, "slipnet")
-    log_fn(f"Inapakua slipnet CLI ({arch})...")
-    try:
-        urlretrieve(url, dest)
-        os.chmod(dest, 0o755)
-        log_fn(f"slipnet: {dest}")
-        return dest
-    except Exception as e:
-        log_fn(f"slipnet download fail: {e}")
-        return None
-
-
 def parse_slipnet_uri(text):
-    """Decode slipnet:// base64 pipe profile. Returns dict."""
     text = text.strip()
     if not text:
         raise ValueError("Config tupu")
-
-    raw_uri = text
     if text.startswith("slipnet-enc://") or text.startswith("slipnet-bundle-enc://"):
-        raise ValueError(
-            "slipnet-enc:// / bundle-enc:// zinahitaji app ya SlipNet (encrypted).\n"
-            "Tumia slipnet:// ya kawaida (isiyo encrypted)."
-        )
+        raise ValueError("Encrypted slipnet-enc:// haitumiki hapa. Tumia slipnet://.")
 
     if text.startswith("slipnet://"):
         b64 = text[len("slipnet://") :].strip()
+        raw_uri = text
     elif re.match(r"^[A-Za-z0-9+/=\-_]+$", text) and len(text) > 40:
         b64 = text
         raw_uri = "slipnet://" + text
@@ -172,45 +170,63 @@ def parse_slipnet_uri(text):
         raise ValueError("Si slipnet:// URI")
 
     pad = "=" * ((4 - len(b64) % 4) % 4)
-    try:
-        decoded = base64.b64decode(b64 + pad).decode("utf-8", errors="replace")
-    except Exception as e:
-        raise ValueError(f"Base64 batili: {e}") from e
-
+    decoded = base64.b64decode(b64 + pad).decode("utf-8", errors="replace")
     fields = decoded.split("|")
     if len(fields) < 5:
-        raise ValueError("Profile fupi mno baada ya decode")
+        raise ValueError("Profile fupi mno")
 
-    # Format (v16+): version|tunnelType|name|domain|resolvers|...|pubkey@11|...
-    version = fields[0]
-    tunnel = fields[1] if len(fields) > 1 else ""
-    name = fields[2] if len(fields) > 2 else ""
-    domain = fields[3] if len(fields) > 3 else ""
     resolvers = fields[4] if len(fields) > 4 else ""
-    # first resolver host for routing exception
     resolver_host = "8.8.8.8"
     if resolvers:
-        part = resolvers.split(",")[0]
-        resolver_host = part.split(":")[0] or "8.8.8.8"
-    pubkey = fields[11] if len(fields) > 11 else ""
-    socks_port = fields[8] if len(fields) > 8 else str(SOCKS_PORT)
+        resolver_host = resolvers.split(",")[0].split(":")[0] or "8.8.8.8"
+    socks = fields[8] if len(fields) > 8 else SOCKS_PORT_DEFAULT
     try:
-        socks_port = int(socks_port) if socks_port.isdigit() else SOCKS_PORT
+        socks = int(socks) if str(socks).isdigit() else int(SOCKS_PORT_DEFAULT)
     except Exception:
-        socks_port = SOCKS_PORT
+        socks = int(SOCKS_PORT_DEFAULT)
 
     return {
         "uri": raw_uri if raw_uri.startswith("slipnet://") else "slipnet://" + b64,
-        "version": version,
-        "tunnel_type": tunnel,
-        "name": name or domain or "slipnet",
-        "domain": domain,
+        "version": fields[0],
+        "tunnel_type": fields[1] if len(fields) > 1 else "",
+        "name": fields[2] if len(fields) > 2 else "",
+        "domain": fields[3] if len(fields) > 3 else "",
         "resolvers": resolvers,
         "resolver_host": resolver_host,
-        "pubkey": pubkey,
-        "socks_port": socks_port,
-        "decoded": decoded,
+        "pubkey": fields[11] if len(fields) > 11 else "",
+        "socks_port": socks,
     }
+
+
+def read_tun_bytes():
+    """RX/TX bytes on TUN device (kernel counters)."""
+    path = f"/sys/class/net/{TUN}/statistics"
+    try:
+        with open(f"{path}/rx_bytes") as f:
+            rx = int(f.read().strip())
+        with open(f"{path}/tx_bytes") as f:
+            tx = int(f.read().strip())
+        return rx, tx
+    except Exception:
+        return None, None
+
+
+def fmt_rate(bps):
+    if bps < 1024:
+        return f"{bps:.0f} B/s"
+    if bps < 1024 * 1024:
+        return f"{bps/1024:.1f} KB/s"
+    return f"{bps/1024/1024:.2f} MB/s"
+
+
+def fmt_total(b):
+    if b < 1024:
+        return f"{b} B"
+    if b < 1024 * 1024:
+        return f"{b/1024:.1f} KB"
+    if b < 1024 * 1024 * 1024:
+        return f"{b/1024/1024:.2f} MB"
+    return f"{b/1024/1024/1024:.2f} GB"
 
 
 class DNSProxy(threading.Thread):
@@ -268,101 +284,162 @@ def save_json(path, data):
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     with open(path, "w") as f:
         json.dump(data, f, indent=2)
-    os.chmod(path, 0o600)
+    try:
+        os.chmod(path, 0o600)
+    except Exception:
+        pass
 
 
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("SlipNet Full-System VPN (Linux)")
-        self.geometry("640x720")
+        self.title("SlipNet / DNSTT VPN")
+        self.geometry("640x860")
         self.procs, self.dns, self.res_ip, self.up = [], None, None, False
-        self.current = load_json(CFG, {})
-        self.profiles = load_json(PROFILES, {})
+        self._stats_stop = threading.Event()
+        self._rx0 = self._tx0 = 0
+        self._last_rx = self._last_tx = 0
+        self._last_t = time.time()
 
-        outer = ttk.Frame(self, padding=10)
+        cfg = load_json(CFG, {})
+        self.profiles = load_json(PROFILES, {})
+        self.slipnet_cfg = cfg.get("slipnet") or {}
+        self.vars = {}
+
+        outer = ttk.Frame(self, padding=8)
         outer.pack(fill="both", expand=True)
 
-        # Import
-        imp = ttk.LabelFrame(outer, text="Import SlipNet config (slipnet://)", padding=8)
-        imp.pack(fill="x", pady=(0, 8))
-        self.import_box = scrolledtext.ScrolledText(imp, height=4, wrap="word")
+        # Mode selector
+        top = ttk.Frame(outer)
+        top.pack(fill="x", pady=(0, 6))
+        ttk.Label(top, text="Mode:").pack(side="left")
+        self.app_mode = tk.StringVar(value=cfg.get("app_mode", "dnstt"))
+        ttk.Radiobutton(
+            top, text="DNSTT + SSH", variable=self.app_mode, value="dnstt", command=self._switch_mode
+        ).pack(side="left", padx=8)
+        ttk.Radiobutton(
+            top, text="SlipNet (slipnet://)", variable=self.app_mode, value="slipnet", command=self._switch_mode
+        ).pack(side="left", padx=8)
+
+        # ---- DNSTT panel ----
+        self.dnstt_frame = ttk.LabelFrame(outer, text="DNSTT + SSH settings", padding=6)
+        for i, (k, label, d) in enumerate(DNSTT_FIELDS):
+            ttk.Label(self.dnstt_frame, text=label).grid(row=i, column=0, sticky="w", pady=1, padx=(0, 6))
+            v = tk.StringVar(value=cfg.get(k, d))
+            self.vars[k] = v
+            show = "*" if k == "ssh_pass" else ""
+            ttk.Entry(self.dnstt_frame, textvariable=v, width=42, show=show).grid(
+                row=i, column=1, sticky="ew", pady=1
+            )
+        self.dnstt_frame.columnconfigure(1, weight=1)
+
+        # ---- SlipNet panel ----
+        self.slip_frame = ttk.LabelFrame(outer, text="SlipNet import (slipnet://)", padding=6)
+        self.import_box = scrolledtext.ScrolledText(self.slip_frame, height=3, wrap="word")
         self.import_box.pack(fill="x", pady=2)
-        if self.current.get("uri"):
-            self.import_box.insert("1.0", self.current["uri"])
-        ttk.Button(imp, text="IMPORT CONFIG", command=self.do_import).pack(fill="x", pady=4)
+        if self.slipnet_cfg.get("uri"):
+            self.import_box.insert("1.0", self.slipnet_cfg["uri"])
+        ttk.Button(self.slip_frame, text="IMPORT CONFIG", command=self.do_import_slipnet).pack(
+            fill="x", pady=2
+        )
+        self.slip_info = tk.StringVar(value=self._slip_info_text())
+        ttk.Label(self.slip_frame, textvariable=self.slip_info, justify="left").pack(anchor="w")
 
-        # Info
-        info = ttk.LabelFrame(outer, text="Profile info", padding=8)
-        info.pack(fill="x", pady=(0, 8))
-        self.info_var = tk.StringVar(value=self._info_text(self.current))
-        ttk.Label(info, textvariable=self.info_var, justify="left").pack(anchor="w")
-
-        # DNS override (optional)
-        row = ttk.Frame(outer)
-        row.pack(fill="x", pady=4)
-        ttk.Label(row, text="DNS resolver (optional override)").pack(side="left")
-        self.dns_override = tk.StringVar(value=self.current.get("dns_override", ""))
-        ttk.Entry(row, textvariable=self.dns_override, width=28).pack(side="left", padx=8)
-
+        # Connect + stats
         self.btn = ttk.Button(outer, text="CONNECT VPN", command=self.toggle)
-        self.btn.pack(fill="x", pady=8)
+        self.btn.pack(fill="x", pady=6)
         self.status = ttk.Label(outer, text="Disconnected", foreground="red")
         self.status.pack()
 
-        self.log = tk.Text(outer, height=12, state="disabled", wrap="word")
-        self.log.pack(fill="both", expand=True, pady=6)
+        stats = ttk.LabelFrame(outer, text="Traffic (thibitisha internet)", padding=6)
+        stats.pack(fill="x", pady=4)
+        self.down_var = tk.StringVar(value="↓ Download: —")
+        self.up_var = tk.StringVar(value="↑ Upload: —")
+        self.total_var = tk.StringVar(value="Total: —")
+        ttk.Label(stats, textvariable=self.down_var, foreground="#0a7").pack(anchor="w")
+        ttk.Label(stats, textvariable=self.up_var, foreground="#07a").pack(anchor="w")
+        ttk.Label(stats, textvariable=self.total_var).pack(anchor="w")
+
+        self.log = tk.Text(outer, height=8, state="disabled", wrap="word")
+        self.log.pack(fill="both", expand=True, pady=4)
 
         # Profiles
-        pf = ttk.LabelFrame(outer, text="Profiles", padding=6)
+        pf = ttk.LabelFrame(outer, text="Profiles", padding=4)
         pf.pack(fill="x")
         r0 = ttk.Frame(pf)
-        r0.pack(fill="x", pady=2)
+        r0.pack(fill="x")
         ttk.Label(r0, text="PROFILE NAME").pack(side="left")
-        self.profile_name = tk.StringVar(value=self.current.get("name", ""))
-        ttk.Entry(r0, textvariable=self.profile_name, width=24).pack(
+        self.profile_name = tk.StringVar()
+        ttk.Entry(r0, textvariable=self.profile_name, width=22).pack(
             side="left", padx=6, fill="x", expand=True
         )
         r1 = ttk.Frame(pf)
         r1.pack(fill="x", pady=2)
-        self.profile_combo = ttk.Combobox(r1, state="readonly", width=22)
-        self.profile_combo.pack(side="left", padx=(0, 6))
+        self.profile_combo = ttk.Combobox(r1, state="readonly", width=20)
+        self.profile_combo.pack(side="left", padx=(0, 4))
         ttk.Button(r1, text="Load", command=self.load_profile).pack(side="left", padx=2)
         ttk.Button(r1, text="Delete", command=self.delete_profile).pack(side="left", padx=2)
-        ttk.Button(pf, text="SAVE PROFILE", command=self.save_profile).pack(fill="x", pady=4)
+        ttk.Button(pf, text="SAVE PROFILE", command=self.save_profile).pack(fill="x", pady=2)
 
         self.refresh_profiles()
+        self._switch_mode()
         self.protocol("WM_DELETE_WINDOW", self.on_close)
 
-    def _info_text(self, d):
-        if not d or not d.get("uri"):
-            return "Hakuna config. Bandika slipnet:// hapo juu → IMPORT."
+    def _slip_info_text(self):
+        d = self.slipnet_cfg
+        if not d.get("uri"):
+            return "Hakuna SlipNet config. Bandika slipnet:// → IMPORT."
         return (
-            f"Name: {d.get('name', '-')}\n"
-            f"Type: {d.get('tunnel_type', '-')}\n"
-            f"Domain: {d.get('domain', '-')}\n"
-            f"Resolvers: {d.get('resolvers', '-')}\n"
-            f"SOCKS port: {d.get('socks_port', SOCKS_PORT)}"
+            f"Name: {d.get('name', '-')} | Type: {d.get('tunnel_type', '-')}\n"
+            f"Domain: {d.get('domain', '-')} | Resolvers: {d.get('resolvers', '-')}"
         )
 
-    def do_import(self):
+    def _switch_mode(self):
+        if self.app_mode.get() == "slipnet":
+            self.dnstt_frame.pack_forget()
+            self.slip_frame.pack(fill="x", pady=(0, 4), after=self.btn.master.winfo_children()[0])
+            # pack order: after mode selector
+            children = [c for c in self.winfo_children()[0].winfo_children()]
+            self.slip_frame.pack(fill="x", pady=(0, 4))
+            self.dnstt_frame.pack_forget()
+        else:
+            self.slip_frame.pack_forget()
+            self.dnstt_frame.pack(fill="x", pady=(0, 4))
+
+        # re-pack connect after panels
+        self.btn.pack_forget()
+        self.status.pack_forget()
+        for w in (self.btn, self.status):
+            pass
+        # simpler: just ensure frames visibility
+        if self.app_mode.get() == "dnstt":
+            self.dnstt_frame.pack(fill="x", pady=(0, 4))
+            self.slip_frame.pack_forget()
+        else:
+            self.slip_frame.pack(fill="x", pady=(0, 4))
+            self.dnstt_frame.pack_forget()
+
+    def do_import_slipnet(self):
         raw = self.import_box.get("1.0", "end").strip()
         try:
             data = parse_slipnet_uri(raw)
         except Exception as e:
             return messagebox.showerror("Import", str(e))
-        data["dns_override"] = self.dns_override.get().strip()
-        self.current = data
-        save_json(CFG, data)
-        self.info_var.set(self._info_text(data))
+        self.slipnet_cfg = data
+        self.slip_info.set(self._slip_info_text())
         self.profile_name.set(data.get("name") or "")
-        self.w(
-            f"Imported OK — type={data.get('tunnel_type')} domain={data.get('domain')}"
-        )
-        messagebox.showinfo(
-            "Import",
-            f"Config imewekwa.\nType: {data.get('tunnel_type')}\nDomain: {data.get('domain')}\n\nBonyeza CONNECT VPN.",
-        )
+        self._save_last()
+        self.w(f"SlipNet imported: {data.get('tunnel_type')} / {data.get('domain')}")
+        messagebox.showinfo("Import", f"OK\nType: {data.get('tunnel_type')}\nDomain: {data.get('domain')}")
+
+    def current_dnstt(self):
+        return {k: v.get().strip() for k, v in self.vars.items()}
+
+    def _save_last(self):
+        data = self.current_dnstt()
+        data["app_mode"] = self.app_mode.get()
+        data["slipnet"] = self.slipnet_cfg
+        save_json(CFG, data)
 
     def refresh_profiles(self):
         names = sorted(self.profiles.keys())
@@ -374,13 +451,15 @@ class App(tk.Tk):
         name = self.profile_name.get().strip()
         if not name:
             return messagebox.showerror("Error", "Andika PROFILE NAME")
-        if not self.current.get("uri"):
-            return messagebox.showerror("Error", "Import config kwanza")
-        self.current["name"] = name
-        self.current["dns_override"] = self.dns_override.get().strip()
-        self.profiles[name] = dict(self.current)
+        payload = {
+            "app_mode": self.app_mode.get(),
+            "dnstt": self.current_dnstt(),
+            "slipnet": self.slipnet_cfg,
+            "uri_raw": self.import_box.get("1.0", "end").strip(),
+        }
+        self.profiles[name] = payload
         save_json(PROFILES, self.profiles)
-        save_json(CFG, self.current)
+        self._save_last()
         self.refresh_profiles()
         self.profile_combo.set(name)
         messagebox.showinfo("Saved", f"Profile '{name}' imehifadhiwa.")
@@ -389,14 +468,19 @@ class App(tk.Tk):
         name = self.profile_combo.get()
         if not name or name not in self.profiles:
             return messagebox.showerror("Error", "Chagua profile")
-        self.current = dict(self.profiles[name])
+        p = self.profiles[name]
+        self.app_mode.set(p.get("app_mode", "dnstt"))
+        for k, v in (p.get("dnstt") or {}).items():
+            if k in self.vars:
+                self.vars[k].set(str(v))
+        self.slipnet_cfg = p.get("slipnet") or {}
         self.import_box.delete("1.0", "end")
-        self.import_box.insert("1.0", self.current.get("uri", ""))
-        self.dns_override.set(self.current.get("dns_override", ""))
+        self.import_box.insert("1.0", p.get("uri_raw") or self.slipnet_cfg.get("uri", ""))
+        self.slip_info.set(self._slip_info_text())
         self.profile_name.set(name)
-        self.info_var.set(self._info_text(self.current))
-        save_json(CFG, self.current)
-        self.w(f"Loaded: {name}")
+        self._switch_mode()
+        self._save_last()
+        self.w(f"Loaded profile: {name}")
 
     def delete_profile(self):
         name = self.profile_combo.get()
@@ -424,81 +508,204 @@ class App(tk.Tk):
         self.after(0, fn, *a)
 
     def start(self):
-        if not self.current.get("uri"):
-            return self.ui(messagebox.showerror, "Error", "Import slipnet:// config kwanza")
+        mode = self.app_mode.get()
+        self._save_last()
 
-        uri = self.current["uri"]
-        socks_port = int(self.current.get("socks_port") or SOCKS_PORT)
-        resolver_host = self.current.get("resolver_host") or "8.8.8.8"
-        override = self.dns_override.get().strip()
-        if override:
-            resolver_host = override.split(":")[0]
+        if mode == "slipnet":
+            self._start_slipnet()
+        else:
+            self._start_dnstt()
 
-        self.ui(self.w, "Inatafuta slipnet + tun2socks...")
-        sn = ensure_slipnet(lambda m: self.ui(self.w, m))
-        t2s = ensure_tun2socks(lambda m: self.ui(self.w, m))
+    def _start_slipnet(self):
+        if not self.slipnet_cfg.get("uri"):
+            # try import box
+            raw = self.import_box.get("1.0", "end").strip()
+            if raw:
+                try:
+                    self.slipnet_cfg = parse_slipnet_uri(raw)
+                    self.ui(self.slip_info.set, self._slip_info_text())
+                except Exception as e:
+                    return self.ui(messagebox.showerror, "Error", str(e))
+            else:
+                return self.ui(messagebox.showerror, "Error", "Import slipnet:// config kwanza")
+
+        uri = self.slipnet_cfg["uri"]
+        socks_port = int(self.slipnet_cfg.get("socks_port") or SOCKS_PORT_DEFAULT)
+        resolver_host = self.slipnet_cfg.get("resolver_host") or "8.8.8.8"
+
+        self.ui(self.w, "SlipNet mode — binaries...")
+        sn = ensure_binary("slipnet", lambda m: self.ui(self.w, m))
+        t2s = ensure_binary("tun2socks", lambda m: self.ui(self.w, m))
         if not sn or not t2s:
-            return self.ui(
-                messagebox.showerror,
-                "Error",
-                "slipnet au tun2socks haipatikani. Angalia internet / jaribu tena.",
-            )
+            return self.ui(messagebox.showerror, "Error", "slipnet / tun2socks haipatikani")
 
         try:
             self.res_ip = socket.gethostbyname(resolver_host)
         except Exception:
             self.res_ip = "8.8.8.8"
-        if not IP_RE.match(self.res_ip):
-            self.res_ip = "8.8.8.8"
 
         self.up = True
         self.ui(self.btn.config, {"text": "DISCONNECT"})
+        self.ui(self.w, f"1/3 slipnet → SOCKS :{socks_port}")
+        self.spawn([sn, "--port", str(socks_port), uri], "slipnet")
 
-        # 1) slipnet CLI → local SOCKS
-        self.ui(self.w, f"1/3 SlipNet CLI → SOCKS :{socks_port}...")
-        cmd = [sn, "--port", str(socks_port)]
-        if override:
-            cmd += ["--dns", override]
-        cmd.append(uri)
-        self.spawn(cmd, "slipnet")
-
-        for _ in range(60):
-            try:
-                socket.create_connection(("127.0.0.1", socks_port), timeout=1).close()
-                break
-            except OSError:
-                time.sleep(1)
-        else:
-            self.ui(self.w, "SlipNet SOCKS haikufunguka. Angalia logs.")
+        if not self._wait_port(socks_port, 60):
+            self.ui(self.w, "SOCKS haikufunguka")
             return self.stop()
 
-        # 2) DNS proxy + tun2socks
-        self.ui(self.w, "2/3 DNS proxy + tun2socks...")
-        self.dns = DNSProxy(socks_port, self.current.get("dns_up", "8.8.8.8") or "8.8.8.8")
+        self._finish_tunnel(t2s, socks_port, "8.8.8.8")
+
+    def _start_dnstt(self):
+        g = self.current_dnstt()
+        if not g["domain"] or not g["pubkey"]:
+            return self.ui(messagebox.showerror, "Error", "NS na PUBLIC KEY zinahitajika")
+        if not g["ssh_user"]:
+            return self.ui(messagebox.showerror, "Error", "USERNAME inahitajika")
+
+        self.ui(self.w, "DNSTT+SSH mode — binaries...")
+        dnstt = ensure_binary("dnstt-client", lambda m: self.ui(self.w, m))
+        t2s = ensure_binary("tun2socks", lambda m: self.ui(self.w, m))
+        if not dnstt or not t2s:
+            return self.ui(messagebox.showerror, "Error", "dnstt-client / tun2socks haipatikani")
+
+        host = (
+            urlparse(g["resolver"]).hostname
+            if "://" in g["resolver"]
+            else g["resolver"].rsplit(":", 1)[0]
+        )
+        try:
+            self.res_ip = socket.gethostbyname(host)
+        except Exception:
+            return self.ui(messagebox.showerror, "Error", "Dns resolve haijulikani")
+
+        flag = {"udp": "-udp", "doh": "-doh", "dot": "-dot"}.get(g["mode"].lower(), "-udp")
+        key = (
+            ["-pubkey-file", g["pubkey"]]
+            if os.path.isfile(g["pubkey"])
+            else ["-pubkey", g["pubkey"]]
+        )
+        local_port = g["ssh_port"] or "7000"
+        socks_port = int(g.get("socks_port") or SOCKS_PORT_DEFAULT)
+        ssh_target = g["ssh_host"] or "127.0.0.1"
+
+        self.up = True
+        self.ui(self.btn.config, {"text": "DISCONNECT"})
+        self.ui(self.w, "1/4 DNSTT...")
+        self.spawn(
+            [dnstt, flag, g["resolver"], *key, g["domain"], f"127.0.0.1:{local_port}"],
+            "dnstt",
+        )
+        time.sleep(2)
+
+        self.ui(self.w, "2/4 SSH...")
+        ssh = [
+            "ssh",
+            "-N",
+            "-D",
+            f"127.0.0.1:{socks_port}",
+            "-p",
+            local_port,
+            "-o",
+            "StrictHostKeyChecking=no",
+            "-o",
+            "UserKnownHostsFile=/dev/null",
+            "-o",
+            "ServerAliveInterval=15",
+            "-o",
+            "ExitOnForwardFailure=yes",
+            f"{g['ssh_user']}@{ssh_target}",
+        ]
+        env = os.environ.copy()
+        if g["ssh_pass"]:
+            env["SSHPASS"] = g["ssh_pass"]
+            ssh = ["sshpass", "-e"] + ssh
+        self.spawn(ssh, "ssh", env)
+
+        if not self._wait_port(socks_port, 45):
+            self.ui(self.w, "SSH SOCKS haikufunguka")
+            return self.stop()
+
+        self._finish_tunnel(t2s, socks_port, g.get("dns_up") or "8.8.8.8")
+
+    def _wait_port(self, port, tries):
+        for _ in range(tries):
+            if not self.up:
+                return False
+            try:
+                socket.create_connection(("127.0.0.1", port), timeout=1).close()
+                return True
+            except OSError:
+                time.sleep(1)
+        return False
+
+    def _finish_tunnel(self, t2s, socks_port, dns_up):
+        self.ui(self.w, "3/4 DNS proxy + tun2socks...")
+        self.dns = DNSProxy(socks_port, dns_up)
         self.dns.start()
         self.spawn(
-            [
-                t2s,
-                "-device",
-                f"tun://{TUN}",
-                "-proxy",
-                f"socks5://127.0.0.1:{socks_port}",
-            ],
+            [t2s, "-device", f"tun://{TUN}", "-proxy", f"socks5://127.0.0.1:{socks_port}"],
             "tun2socks",
         )
-
-        # 3) routes
-        self.ui(self.w, "3/3 Routes (pkexec)...")
+        self.ui(self.w, "4/4 Routes (pkexec)...")
         r = pk(UP % {"tun": TUN, "res": self.res_ip})
         if r.returncode != 0:
             self.ui(self.w, "Routes fail: " + (r.stderr or r.stdout))
             return self.stop()
 
-        self.ui(
-            self.status.config,
-            {"text": "VPN ON — trafiki yote kupitia SlipNet", "foreground": "green"},
-        )
+        self.ui(self.status.config, {"text": "VPN ON", "foreground": "green"})
+        self._start_stats()
+        # optional connectivity probe
+        threading.Thread(target=self._probe_internet, daemon=True).start()
         self.watch()
+
+    def _probe_internet(self):
+        time.sleep(2)
+        try:
+            # through system stack (should use tunnel if routes OK)
+            import urllib.request
+
+            with urllib.request.urlopen("https://httpbin.org/ip", timeout=15) as r:
+                body = r.read().decode()[:200]
+            self.ui(self.w, f"Internet OK via tunnel: {body.strip()}")
+        except Exception as e:
+            self.ui(self.w, f"Probe: bado hakuna internet wazi ({e})")
+
+    def _start_stats(self):
+        self._stats_stop.clear()
+        rx, tx = read_tun_bytes()
+        self._rx0 = rx or 0
+        self._tx0 = tx or 0
+        self._last_rx = self._rx0
+        self._last_tx = self._tx0
+        self._last_t = time.time()
+
+        def loop():
+            while not self._stats_stop.is_set() and self.up:
+                time.sleep(1)
+                rx, tx = read_tun_bytes()
+                if rx is None:
+                    continue
+                now = time.time()
+                dt = max(now - self._last_t, 0.001)
+                down_rate = (rx - self._last_rx) / dt  # RX on tun = download from net perspective via tunnel
+                up_rate = (tx - self._last_tx) / dt
+                self._last_rx, self._last_tx, self._last_t = rx, tx, now
+                total_down = rx - self._rx0
+                total_up = tx - self._tx0
+                self.ui(
+                    self.down_var.set,
+                    f"↓ Download: {fmt_rate(down_rate)}  ({fmt_total(total_down)})",
+                )
+                self.ui(
+                    self.up_var.set,
+                    f"↑ Upload: {fmt_rate(up_rate)}  ({fmt_total(total_up)})",
+                )
+                self.ui(
+                    self.total_var.set,
+                    f"Total: ↓ {fmt_total(total_down)}  ↑ {fmt_total(total_up)}",
+                )
+
+        threading.Thread(target=loop, daemon=True).start()
 
     def spawn(self, cmd, name, env=None):
         p = subprocess.Popen(
@@ -524,6 +731,7 @@ class App(tk.Tk):
         if not self.up and not self.procs:
             return
         self.up = False
+        self._stats_stop.set()
         for p in reversed(self.procs):
             try:
                 p.terminate()
@@ -537,6 +745,9 @@ class App(tk.Tk):
             pk(DOWN % {"tun": TUN, "res": self.res_ip})
         self.ui(self.btn.config, {"text": "CONNECT VPN"})
         self.ui(self.status.config, {"text": "Disconnected", "foreground": "red"})
+        self.ui(self.down_var.set, "↓ Download: —")
+        self.ui(self.up_var.set, "↑ Upload: —")
+        self.ui(self.total_var.set, "Total: —")
 
     def on_close(self):
         self.stop()
